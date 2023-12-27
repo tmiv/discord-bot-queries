@@ -7,61 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/golang-collections/collections/set"
 	"github.com/rs/cors"
-	"github.com/xenitab/go-oidc-middleware/oidctoken"
-	"github.com/xenitab/go-oidc-middleware/options"
+	ovm "github.com/tmiv/oidc-verify-middleware"
 )
-
-type EmailClaims struct {
-	Email string `json:"email"`
-}
-
-func emailAllowedValidator() options.ClaimsValidationFn[EmailClaims] {
-	allow_env := strings.Split(os.Getenv("SECURITY_ALLOW"), ",")
-	allow_list := set.New()
-	for _, s := range allow_env {
-		allow_list.Insert(s)
-	}
-	return func(claims *EmailClaims) error {
-		if allow_list.Has(claims.Email) {
-			return nil
-		} else {
-			return fmt.Errorf("%s is not on the allow list", claims.Email)
-		}
-	}
-}
-
-func SetupOIDCMiddleware() func(next func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
-	oidctok, err := oidctoken.New[EmailClaims](
-		emailAllowedValidator(),
-		options.WithIssuer(os.Getenv("SECURITY_ISSUER")),
-		options.WithRequiredTokenType("JWT"),
-		options.WithRequiredAudience(os.Getenv("SECURITY_AUDIENCE")),
-	)
-	if err != nil {
-		log.Fatalf("Error creating token parser %+v\n", err)
-	}
-	oidcmiddle := func(next func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
-		return func(w http.ResponseWriter, r *http.Request) {
-			auth := r.Header.Get("Authorization")
-			if !strings.HasPrefix(auth, "Bearer ") {
-				log.Printf("No bearer %s\n", auth)
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
-			_, err = oidctok.ParseToken(r.Context(), auth[7:])
-			if err != nil {
-				log.Printf("Unauthorized %v\n", err)
-				w.WriteHeader(http.StatusUnauthorized)
-				return
-			}
-			next(w, r)
-		}
-	}
-
-	return oidcmiddle
-}
 
 func setupcors() *cors.Cors {
 	options := cors.Options{
@@ -93,7 +41,7 @@ func main() {
 	if len(os.Getenv("SKIP_OIDC")) > 0 {
 		middleware = passthrough
 	} else {
-		middleware = SetupOIDCMiddleware()
+		middleware = ovm.SetupOIDCMiddleware("")
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/VerifyMembership", middleware(verifyMembership))
